@@ -13,6 +13,7 @@ app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '20mb' }));
 app.use(cookieParser());
 
+// الاتصال بقاعدة بيانات Supabase PostgreSQL
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
@@ -20,6 +21,7 @@ const pool = new Pool({
 
 const secret = process.env.JWT_SECRET || 'local-dev-secret-change-before-production';
 
+// التحقق من الجلسة وصلاحيات المستخدم
 function auth(req, res, next) {
     const token = req.cookies.nasim_token;
     if (!token) return res.status(401).json({ error: 'يلزم تسجيل الدخول' });
@@ -39,7 +41,7 @@ function auth(req, res, next) {
     }
 }
 
-// مسار تسجيل الدخول
+// مسار تسجيل الدخول المرن والمضمون
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body || {};
     try {
@@ -57,6 +59,10 @@ app.post('/api/login', async (req, res) => {
         const token = jwt.sign({ id: user.id }, secret, { expiresIn: '10h' });
         res.cookie('nasim_token', token, { httpOnly: true, sameSite: 'strict', secure: false, maxAge: 10 * 60 * 60 * 1000 });
         
+        try {
+            await pool.query('INSERT INTO audit_logs(user_id, action, entity) VALUES($1, $2, $3)', [user.id, 'login', 'users']);
+        } catch (e) {}
+
         let perms = [];
         try { perms = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : user.permissions; } catch {}
         res.json({ id: user.id, username: user.username, name: user.full_name, role: user.role, permissions: perms });
@@ -68,6 +74,7 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', (req, res) => { res.clearCookie('nasim_token'); res.json({ ok: true }); });
 app.get('/api/me', auth, (req, res) => res.json({ id: req.user.id, username: req.user.username, name: req.user.full_name, role: req.user.role, permissions: req.user.permissions }));
 
+// إحصائيات لوحة التحكم
 app.get('/api/summary', auth, async (req, res) => {
     try {
         const halls = await pool.query('SELECT count(*) n FROM halls WHERE active=1');
@@ -85,17 +92,17 @@ app.get('/api/summary', auth, async (req, res) => {
     }
 });
 
-// دالة ذكية لإرجاع بيانات الجداول أو مصفوفة فارغة تفادياً لأخطاء الـ .filter
+// دالة ذكية لجلب بيانات الجداول بضمان إرجاع مصفوفة لتفادي الانهيار
 async function handleTableQuery(tableName, req, res) {
     try {
         const data = await pool.query(`SELECT * FROM ${tableName}`);
         res.json(data.rows || []);
     } catch (e) {
-        res.json([]); // إرجاع مصفوفة فارغة إذا لم يتم إنشاء الجدول بعد لتجنب انهيار الصفحة
+        res.json([]); // إرجاع مصفوفة فارغة لتجنب أخطاء الواجهة إذا لم يكن الجدول موجوداً بعد
     }
 }
 
-// تغطية كافة مسارات النظام والصفحات لتجنب أخطاء الفلترة
+// ربط جميع مسارات الجداول في النظام تلقائياً
 const tablesMap = {
     'accounting': 'accounts',
     'cashbox': 'cash_journal',
@@ -106,13 +113,16 @@ const tablesMap = {
     'buffets': 'buffets',
     'buffet': 'buffets',
     'addons': 'addons',
+    'operations-addons': 'operations_addons',
     'expenses': 'expenses',
     'customers': 'customers',
     'contractors': 'contractors',
     'users': 'users',
     'inventory': 'inventory',
     'offers': 'offers',
-    'followups': 'followups'
+    'followups': 'followups',
+    'inquiries': 'inquiries',
+    'work-orders': 'work_orders'
 };
 
 for (const [routeKey, dbTable] of Object.entries(tablesMap)) {
