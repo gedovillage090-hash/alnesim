@@ -39,7 +39,7 @@ function auth(req, res, next) {
     }
 }
 
-// مسار تسجيل الدخول المرن والمضمون
+// مسار تسجيل الدخول
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body || {};
     try {
@@ -85,21 +85,39 @@ app.get('/api/summary', auth, async (req, res) => {
     }
 });
 
-// دالة عامة لضمان إرجاع مصفوفة بيانات صحيحة لأي جدول تفاديًا لأخطاء الـ .filter أو .length
+// دالة ذكية لإرجاع بيانات الجداول أو مصفوفة فارغة تفادياً لأخطاء الـ .filter
 async function handleTableQuery(tableName, req, res) {
     try {
         const data = await pool.query(`SELECT * FROM ${tableName}`);
         res.json(data.rows || []);
     } catch (e) {
-        res.json([]);
+        res.json([]); // إرجاع مصفوفة فارغة إذا لم يتم إنشاء الجدول بعد لتجنب انهيار الصفحة
     }
 }
 
-app.get('/api/accounting', auth, (req, res) => handleTableQuery('accounts', req, res));
-app.get('/api/cashbox', auth, (req, res) => handleTableQuery('cash_journal', req, res));
-app.get('/api/bookings', auth, (req, res) => handleTableQuery('bookings', req, res));
-app.get('/api/halls', auth, (req, res) => handleTableQuery('halls', req, res));
-app.get('/api/expenses', auth, (req, res) => handleTableQuery('expenses', req, res));
+// تغطية كافة مسارات النظام والصفحات لتجنب أخطاء الفلترة
+const tablesMap = {
+    'accounting': 'accounts',
+    'cashbox': 'cash_journal',
+    'cash-journal': 'cash_journal',
+    'bookings': 'bookings',
+    'halls': 'halls',
+    'packages': 'hall_packages',
+    'buffets': 'buffets',
+    'buffet': 'buffets',
+    'addons': 'addons',
+    'expenses': 'expenses',
+    'customers': 'customers',
+    'contractors': 'contractors',
+    'users': 'users',
+    'inventory': 'inventory',
+    'offers': 'offers',
+    'followups': 'followups'
+};
+
+for (const [routeKey, dbTable] of Object.entries(tablesMap)) {
+    app.get(`/api/${routeKey}`, auth, (req, res) => handleTableQuery(dbTable, req, res));
+}
 
 app.get('/api/health', (req, res) => res.json({ ok: true, database: 'supabase-postgres', timestamp: new Date().toISOString() }));
 app.use(express.static(path.join(__dirname, 'public')));
